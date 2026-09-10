@@ -20,22 +20,22 @@ IMAGE_RE = re.compile(
     r'class="channel-header--(img|backsplash-img)"[^>]+src="([^"]+)"',
     re.IGNORECASE,
 )
-NOT_FOUND_MARKERS = {
-    404: "<title>404 Not found</title>",
-    410: "<title>410 Gone</title>",
-}
+NOT_FOUND_TITLES = {404: "404 not found", 410: "410 gone"}
 SOCIAL_RE = re.compile(r'<a href="([^"]+)" class="channel-subheader--socials-item"')
 STAT_RE = re.compile(r"([\d,]+)\s+(views|videos)\s*</p>", re.IGNORECASE)
+TITLE_RE = re.compile(r"<title>([^<]*)</title>", re.IGNORECASE)
 VERIFIED_RE = re.compile(r'<svg class="channel-header--verified\b')
 
 
-def validate_rumble(user: str) -> Result:
-    """Validate a Rumble user account."""
-    url = f"https://rumble.com/user/{quote(user, safe='')}"
+def validate_rumble_channel(user: str) -> Result:
+    """Validate a Rumble channel."""
+    url = f"https://rumble.com/c/{quote(user, safe='')}"
 
     def process(response):
-        marker = NOT_FOUND_MARKERS.get(response.status_code)
-        if marker and marker in response.text:
+        title_match = TITLE_RE.search(response.text)
+        title = html.unescape(title_match.group(1)).strip() if title_match else ""
+
+        if title.casefold() == NOT_FOUND_TITLES.get(response.status_code):
             return Result.available()
 
         if response.status_code != 200:
@@ -43,18 +43,24 @@ def validate_rumble(user: str) -> Result:
 
         canonical = CANONICAL_RE.search(response.text)
         creator_id = re.search(r'"creator_id":\s*"(\d+)"', response.text)
+        channel_id = re.search(r'"channel_id":\s*"(\d+)"', response.text)
         if (
             not canonical
             or canonical.group(1).casefold() != str(response.url).casefold()
             or not creator_id
+            or not channel_id
         ):
-            return Result.error("Rumble user markers do not match the response")
+            return Result.error("Rumble channel markers do not match the response")
 
-        extra = {"creator_id": creator_id.group(1)}
+        extra = {
+            "name": title,
+            "creator_id": creator_id.group(1),
+            "channel_id": channel_id.group(1),
+        }
 
         profile = {}
         profile_start = re.search(
-            rf'\{{"type":"user","url":"{re.escape(canonical.group(1))}"',
+            rf'\{{"type":"channel","url":"{re.escape(canonical.group(1))}"',
             response.text,
             re.IGNORECASE,
         )
